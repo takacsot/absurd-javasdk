@@ -3,6 +3,11 @@
   <br><br>
 </div>
 
+Java SDK for an absurd durable execution.
+
+
+-------------
+
 # Absurd
 
 Absurd is the simplest durable execution workflow system you can think of.
