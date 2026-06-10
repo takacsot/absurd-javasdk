@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page(~{::main}, 'tasks', 'Tasks')}">
+<body>
+<main>
+    <div class="page-header">
+        <h1>Tasks</h1>
+        <p>Monitor and manage durable tasks across all queues.</p>
+        <div class="auto-refresh" style="display:flex; align-items:center; gap:0.5rem; margin-top:0.5rem;">
+            <label style="font-size:.85rem;">
+                <input type="checkbox" id="autoRefreshToggle"/> Auto-refresh
+            </label>
+            <select id="autoRefreshInterval" style="font-size:.85rem;">
+                <option value="15">15s</option>
+                <option value="30">30s</option>
+                <option value="60">60s</option>
+            </select>
+        </div>
+    </div>
+    <script>
+    (function() {
+        var toggle = document.getElementById('autoRefreshToggle');
+        var intervalSelect = document.getElementById('autoRefreshInterval');
+        var timer = null;
+        var stored = localStorage.getItem('habitat.autoRefresh');
+        var config = stored ? JSON.parse(stored) : {enabled: false, interval: 15};
+
+        toggle.checked = config.enabled;
+        intervalSelect.value = config.interval;
+
+        function save() {
+            config.enabled = toggle.checked;
+            config.interval = parseInt(intervalSelect.value);
+            localStorage.setItem('habitat.autoRefresh', JSON.stringify(config));
+        }
+
+        function start() {
+            stop();
+            if (config.enabled) {
+                timer = setTimeout(function() { location.reload(); }, config.interval * 1000);
+            }
+        }
+
+        function stop() { if (timer) { clearTimeout(timer); timer = null; } }
+
+        toggle.addEventListener('change', function() { save(); start(); });
+        intervalSelect.addEventListener('change', function() { save(); start(); });
+
+        start();
+    })();
+    </script>
+    <div style="padding: 1.5rem;">
+        <div class="card">
+            <div class="card-header">
+                <h2>Task Runs</h2>
+                <p>Each row represents a single run. Click a task ID to view full history.</p>
+            </div>
+            <div class="card-body">
+                <form method="get" action="/tasks">
+                    <div class="filters">
+                        <div class="filter-group">
+                            <label>Search</label>
+                            <input type="text" name="q" th:value="${q}" placeholder="IDs, names, queue, params..."/>
+                        </div>
+                        <div class="filter-group">
+                            <label>Queue</label>
+                            <select name="queue">
+                                <option value="">All queues</option>
+                                <option th:each="qn : ${availableQueues}" th:value="${qn}" th:text="${qn}" th:selected="${qn == queue}"></option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Status</label>
+                            <select name="status">
+                                <option value="">All statuses</option>
+                                <option th:each="s : ${availableStatuses}" th:value="${s}" th:text="${s}" th:selected="${s == status}"></option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Task name</label>
+                            <select name="taskName">
+                                <option value="">All task names</option>
+                                <option th:each="tn : ${availableTaskNames}" th:value="${tn}" th:text="${tn}" th:selected="${tn == taskName}"></option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn" style="margin-bottom:1rem;">Filter</button>
+                </form>
+                <div th:if="${total != null && total >= 0}" class="text-muted" style="margin-bottom:0.5rem;">
+                    Showing <span th:text="${pageStart}"></span>&ndash;<span th:text="${pageEnd}"></span> of <span th:text="${total}"></span> tasks
+                </div>
+                <div th:if="${#lists.isEmpty(items)}" class="empty">
+                    No tasks found. Adjust your filters or check back once workers enqueue tasks.
+                </div>
+                <table th:unless="${#lists.isEmpty(items)}">
+                    <thead>
+                    <tr>
+                        <th>Task ID</th><th>Task Name</th><th>Queue</th><th>Status</th>
+                        <th>Attempt</th><th>Run ID</th><th>Created</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="t : ${items}">
+                        <td><a th:href="'/tasks/' + ${t.taskId}" th:text="${t.taskId}" th:title="${t.taskId}" style="font-family:monospace;font-size:.8rem;"></a></td>
+                        <td style="font-weight:500;" th:text="${t.taskName}"></td>
+                        <td th:text="${t.queueName}"></td>
+                        <td><span class="badge" th:classappend="'badge-' + ${t.status}" th:text="${t.status}"></span></td>
+                        <td class="tabnum"><span th:text="${t.attempt}"></span><span th:if="${t.maxAttempts != null}"> / <span th:text="${t.maxAttempts}"></span></span><span th:unless="${t.maxAttempts != null}"> / &infin;</span></td>
+                        <td style="font-family:monospace;font-size:.8rem;" th:text="${t.runId}" th:title="${t.runId}"></td>
+                        <td class="text-muted" th:text="${t.createdAt}"></td>
+                    </tr>
+                    </tbody>
+                </table>
+                <div th:if="${!#lists.isEmpty(items)}" class="pagination">
+                    <a th:if="${page > 1}" th:href="'/tasks?page=' + ${page - 1} + ${queueParam} + ${statusParam} + ${taskNameParam} + ${searchParam}" class="btn">&laquo; Previous</a>
+                    <span th:unless="${page > 1}" class="btn btn-disabled">&laquo; Previous</span>
+                    <span class="text-muted">Page <span th:text="${page}"></span></span>
+                    <a th:if="${hasMore}" th:href="'/tasks?page=' + ${page + 1} + ${queueParam} + ${statusParam} + ${taskNameParam} + ${searchParam}" class="btn">Next &raquo;</a>
+                    <span th:unless="${hasMore}" class="btn btn-disabled">Next &raquo;</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+</body>
+</html>

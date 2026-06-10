@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page(~{::main}, 'overview', 'Overview')}">
+<body>
+<main>
+    <div class="page-header">
+        <h1>Overview</h1>
+        <p>Current queue health across your Absurd installation.</p>
+    </div>
+    <div style="padding: 1.5rem;">
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Active queues</div>
+                <div class="stat-value" th:text="${stats.queueCount}">0</div>
+                <div class="stat-desc">Queues with registered metrics</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Messages processed</div>
+                <div class="stat-value" th:text="${stats.totalMessages}">0</div>
+                <div class="stat-desc">Total messages the queues have seen</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Messages in queue</div>
+                <div class="stat-value" th:text="${stats.totalPending}">0</div>
+                <div class="stat-desc">Unclaimed messages in queue storage</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Visible right now</div>
+                <div class="stat-value" th:text="${stats.totalVisible}">0</div>
+                <div class="stat-desc">Ready for immediate consumption</div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <h2>Queue metrics</h2>
+                <p>Visibility into backlog depth and message freshness.</p>
+            </div>
+            <div class="card-body">
+                <div th:if="${#lists.isEmpty(queues)}" class="empty">
+                    No queues discovered yet. Once workers enqueue tasks, metrics will appear automatically.
+                </div>
+                <table th:unless="${#lists.isEmpty(queues)}">
+                    <thead>
+                    <tr>
+                        <th>Queue</th><th>In Queue</th><th>Visible</th>
+                        <th>Newest</th><th>Oldest</th><th>Total seen</th><th>Actions</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="q : ${queues}">
+                        <td th:text="${q.queueName}" style="font-weight:500;"></td>
+                        <td class="tabnum" th:text="${q.queueLength}"></td>
+                        <td class="tabnum" th:text="${q.queueVisibleLength}"></td>
+                        <td class="text-muted" th:text="${q.newestMsgAt != null ? q.newestMsgAt : '—'}"></td>
+                        <td class="text-muted" th:text="${q.oldestMsgAt != null ? q.oldestMsgAt : '—'}"></td>
+                        <td class="tabnum" th:text="${q.totalMessages}"></td>
+                        <td>
+                            <a th:href="'/tasks?queue=' + ${q.queueName}" style="font-size:.75rem;font-weight:500;">Tasks &rarr;</a>
+                            &nbsp;
+                            <a th:href="'/events?queue=' + ${q.queueName}" style="font-size:.75rem;font-weight:500;">Events &rarr;</a>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</main>
+</body>
+</html>

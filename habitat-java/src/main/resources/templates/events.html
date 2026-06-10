@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page(~{::main}, 'events', 'Events')}">
+<body>
+<main>
+    <div class="page-header">
+        <h1>Event log</h1>
+        <p>Inspect emitted events across queues with filterable payloads.</p>
+    </div>
+    <div style="padding: 1.5rem;">
+        <div class="card">
+            <div class="card-header">
+                <h2>Filters</h2>
+                <p>Narrow the event list by queue and event name.</p>
+            </div>
+            <div class="card-body">
+                <form method="get" action="/events">
+                    <div class="filters" style="grid-template-columns: 1fr 1fr;">
+                        <div class="filter-group">
+                            <label>Event name</label>
+                            <input type="text" name="eventName" th:value="${eventName}" placeholder="payment.completed"/>
+                        </div>
+                        <div class="filter-group">
+                            <label>Queue</label>
+                            <select name="queue">
+                                <option value="">All queues</option>
+                                <option th:each="qn : ${availableQueues}" th:value="${qn}" th:text="${qn}" th:selected="${qn == queue}"></option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn">Filter</button>
+                </form>
+            </div>
+        </div>
+        <div class="card" style="margin-top:1rem;">
+            <div class="card-header">
+                <h2>Event timeline</h2>
+                <p>Showing the most recent events matching your filters.</p>
+            </div>
+            <div class="card-body">
+                <div th:if="${#lists.isEmpty(events)}" class="empty">
+                    No events matched the selected filters.
+                </div>
+                <div th:unless="${#lists.isEmpty(events)}">
+                    <div th:each="e : ${events}" class="event-card">
+                        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:.5rem;">
+                            <span class="event-name" th:text="${e.eventName}"></span>
+                            <span class="event-meta">
+                                <span th:if="${e.emittedAt != null}">Emitted <span th:text="${e.emittedAt}"></span></span>
+                                <span th:unless="${e.emittedAt != null}">Created <span th:text="${e.createdAt}"></span></span>
+                                &bull; Queue <span th:text="${e.queueName}"></span>
+                            </span>
+                        </div>
+                        <div th:if="${e.payload != null}" class="event-payload" th:text="${e.payload}"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+</body>
+</html>

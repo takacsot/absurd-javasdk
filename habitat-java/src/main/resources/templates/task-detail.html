@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page(~{::main}, 'tasks', 'Task Detail')}">
+<body>
+<main>
+    <div class="page-header">
+        <h1>Task "<span th:text="${taskName} ?: 'Unknown'"></span>" <span th:if="${taskStatus != null}" class="badge" th:classappend="'badge-' + ${taskStatus}" th:text="${taskStatus}"></span></h1>
+        <p style="font-family:monospace;font-size:.8rem;">Task ID: <span th:text="${taskId}"></span></p>
+        <div style="margin-top:.5rem;">
+            <a href="/tasks" class="btn" style="font-size:.8rem;">&larr; Back to tasks</a>
+        </div>
+    </div>
+    <div style="padding: 1.5rem;">
+        <div th:if="${#lists.isEmpty(runs)}" class="empty">
+            No runs found for this task.
+        </div>
+        <div th:each="run : ${runs}" class="card" style="margin-bottom:1rem;">
+            <div class="card-header">
+                <h2 style="display:flex;align-items:center;gap:.5rem;">
+                    <span style="font-size:.875rem;">Run ID:</span>
+                    <span style="font-family:monospace;font-size:.8rem;" th:text="${run.runId}"></span>
+                    <span class="badge" th:classappend="'badge-' + ${run.status}" th:text="${run.status}"></span>
+                </h2>
+                <p class="text-muted">
+                    Queue: <strong th:text="${run.queueName}"></strong>
+                    &bull; Attempt: <strong th:text="${run.attempt}"></strong>
+                    <span th:if="${run.maxAttempts != null}"> / <span th:text="${run.maxAttempts}"></span></span>
+                    &bull; Created: <span th:text="${run.createdAt}"></span>
+                    &bull; Updated: <span th:text="${run.updatedAt}"></span>
+                    <span th:if="${run.completedAt != null}"> &bull; Completed: <span th:text="${run.completedAt}"></span></span>
+                    <span th:if="${run.workerId != null}"> &bull; Worker: <strong th:text="${run.workerId}"></strong></span>
+                </p>
+            </div>
+            <div class="card-body">
+                <div th:if="${run.params != null}" class="detail-section">
+                    <h3>Params</h3>
+                    <div class="json-viewer" th:text="${run.params}"></div>
+                </div>
+                <div th:if="${run.state != null}" class="detail-section">
+                    <h3 th:text="${run.status == 'failed'} ? 'Error' : 'State / Result'">State / Result</h3>
+                    <pre th:if="${run.status == 'failed'}" class="error-trace" th:text="${run.stackTrace()}" style="background:#fef2f2;color:#991b1b;padding:1rem;border-radius:4px;border:1px solid #fecaca;overflow-x:auto;font-size:.8rem;white-space:pre-wrap;word-break:break-word;"></pre>
+                    <div th:unless="${run.status == 'failed'}" class="json-viewer" th:text="${run.state}"></div>
+                </div>
+                <div th:if="${run.retryStrategy != null}" class="detail-section">
+                    <h3>Retry Strategy</h3>
+                    <div class="json-viewer" th:text="${run.retryStrategy}"></div>
+                </div>
+                <div th:if="${run.headers != null}" class="detail-section">
+                    <h3>Headers</h3>
+                    <div class="json-viewer" th:text="${run.headers}"></div>
+                </div>
+                <div th:if="${!#lists.isEmpty(run.waits)}" class="detail-section">
+                    <h3>Wait States</h3>
+                    <table>
+                        <thead><tr><th>Type</th><th>Event</th><th>Step</th><th>Wake At</th></tr></thead>
+                        <tbody>
+                        <tr th:each="w : ${run.waits}">
+                            <td th:text="${w.waitType}"></td>
+                            <td th:text="${w.wakeEvent}"></td>
+                            <td th:text="${w.stepName}"></td>
+                            <td class="text-muted" th:text="${w.wakeAt}"></td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        <div th:if="${!#lists.isEmpty(checkpoints)}" class="card" style="margin-bottom:1rem;">
+            <div class="card-header">
+                <h2>Checkpoints</h2>
+            </div>
+            <div class="card-body">
+                <div th:each="cp : ${checkpoints}" style="border:1px solid #e5e7eb;border-radius:4px;padding:1rem;margin-bottom:0.75rem;background:#f9fafb;">
+                    <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.25rem;">
+                        <strong th:text="${cp.stepName}"></strong>
+                        <span class="badge" th:text="${cp.status}"></span>
+                    </div>
+                    <div class="text-muted" style="font-size:.8rem;margin-bottom:0.5rem;">
+                        Updated <span th:text="${cp.updatedAt}"></span>
+                    </div>
+                    <pre th:if="${cp.state != null}" style="background:#f3f4f6;padding:0.75rem;border-radius:4px;font-size:.8rem;white-space:pre-wrap;word-break:break-word;margin:0;border:1px solid #e5e7eb;" th:text="${cp.state}"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+</body>
+</html>

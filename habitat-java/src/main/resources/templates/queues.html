@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page(~{::main}, 'queues', 'Queues')}">
+<body>
+<main>
+    <div class="page-header">
+        <h1>Queues</h1>
+        <p>Inspect queue health, backlog contents, and recent events.</p>
+    </div>
+    <div style="padding: 1.5rem;">
+        <div th:if="${#lists.isEmpty(queues)}" class="empty">
+            No queues have been registered yet.
+        </div>
+        <div th:unless="${#lists.isEmpty(queues)}" class="queue-grid">
+            <div th:each="q : ${queues}" class="queue-card">
+                <div style="display:flex;justify-content:space-between;align-items:start;">
+                    <strong th:text="${q.queueName}"></strong>
+                    <span class="text-muted" th:text="${q.createdAt}"></span>
+                </div>
+                <div class="stat-mini-grid">
+                    <div class="stat-mini"><div class="stat-mini-label">Pending</div><div class="stat-mini-value" th:text="${q.pendingCount}"></div></div>
+                    <div class="stat-mini"><div class="stat-mini-label">Running</div><div class="stat-mini-value" th:text="${q.runningCount}"></div></div>
+                    <div class="stat-mini"><div class="stat-mini-label">Sleeping</div><div class="stat-mini-value" th:text="${q.sleepingCount}"></div></div>
+                    <div class="stat-mini"><div class="stat-mini-label">Completed</div><div class="stat-mini-value" th:text="${q.completedCount}"></div></div>
+                    <div class="stat-mini"><div class="stat-mini-label">Failed</div><div class="stat-mini-value" th:text="${q.failedCount}"></div></div>
+                    <div class="stat-mini"><div class="stat-mini-label">Cancelled</div><div class="stat-mini-value" th:text="${q.cancelledCount}"></div></div>
+                </div>
+                <div style="display:flex;gap:1rem;">
+                    <a th:href="'/tasks?queue=' + ${q.queueName}" style="font-size:.75rem;font-weight:500;">Tasks &rarr;</a>
+                    <a th:href="'/events?queue=' + ${q.queueName}" style="font-size:.75rem;font-weight:500;">Events &rarr;</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+</body>
+</html>

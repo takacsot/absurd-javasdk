@@ -3,4 +3,13 @@ node_modules
 .pi/todos
 dist/
 .build/
+.gradle/
 site/
+/habitat-java/build/
+/habitat-java/.gradle/
+/habitat-java/build.log
+/.idea/absurd-javasdk.iml
+/.idea/
+/sdks/java_sdk/build.log
+/sdks/java_sdk/src/test/test.iml
+/sdks/java_sdk/test.log
