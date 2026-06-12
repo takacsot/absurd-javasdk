@@ -54,13 +54,15 @@ public final class Absurd implements AutoCloseable {
     private final Jdbi jdbi;
     private final String queueName;
     private final int defaultMaxAttempts;
+    private final List<TaskLifecycleListener> listeners;
     private final ConcurrentHashMap<String, TaskRegistration> registry = new ConcurrentHashMap<>();
     private volatile Worker worker;
 
-    private Absurd(Jdbi jdbi, String queueName, int defaultMaxAttempts) {
+    private Absurd(Jdbi jdbi, String queueName, int defaultMaxAttempts, List<TaskLifecycleListener> listeners) {
         this.jdbi = jdbi;
         this.queueName = validateQueueName(queueName);
         this.defaultMaxAttempts = defaultMaxAttempts;
+        this.listeners = listeners != null ? List.copyOf(listeners) : List.of();
     }
 
     public static Absurd create(DataSource dataSource) {
@@ -85,7 +87,7 @@ public final class Absurd implements AutoCloseable {
      */
     public static Absurd create(DataSource dataSource, String queueName, int defaultMaxAttempts) {
         Jdbi jdbi = Jdbi.create(dataSource);
-        return new Absurd(jdbi, queueName, defaultMaxAttempts);
+        return new Absurd(jdbi, queueName, defaultMaxAttempts, null);
     }
 
     public static Absurd create(Jdbi jdbi) {
@@ -97,7 +99,45 @@ public final class Absurd implements AutoCloseable {
     }
 
     public static Absurd create(Jdbi jdbi, String queueName, int defaultMaxAttempts) {
-        return new Absurd(jdbi, queueName, defaultMaxAttempts);
+        return new Absurd(jdbi, queueName, defaultMaxAttempts, null);
+    }
+
+    public static AbsurdBuilder builder(DataSource dataSource) {
+        return new AbsurdBuilder(Jdbi.create(dataSource));
+    }
+
+    public static AbsurdBuilder builder(Jdbi jdbi) {
+        return new AbsurdBuilder(jdbi);
+    }
+
+    public static final class AbsurdBuilder {
+        private final Jdbi jdbi;
+        private String queueName = "default";
+        private int defaultMaxAttempts = 5;
+        private final List<TaskLifecycleListener> listeners = new ArrayList<>();
+
+        private AbsurdBuilder(Jdbi jdbi) {
+            this.jdbi = jdbi;
+        }
+
+        public AbsurdBuilder queueName(String queueName) {
+            this.queueName = queueName;
+            return this;
+        }
+
+        public AbsurdBuilder defaultMaxAttempts(int defaultMaxAttempts) {
+            this.defaultMaxAttempts = defaultMaxAttempts;
+            return this;
+        }
+
+        public AbsurdBuilder listener(TaskLifecycleListener listener) {
+            this.listeners.add(listener);
+            return this;
+        }
+
+        public Absurd build() {
+            return new Absurd(jdbi, queueName, defaultMaxAttempts, listeners);
+        }
     }
 
     public Jdbi jdbi() {
@@ -121,6 +161,7 @@ public final class Absurd implements AutoCloseable {
                 registration.handler()
         );
         registry.put(registration.name(), effective);
+        notifyListeners(l -> l.onTaskRegistered(registration.name()));
     }
 
     public <P, R> void registerTask(String name, Class<P> paramsType, TaskHandler<P, R> handler) {
@@ -591,15 +632,24 @@ public final class Absurd implements AutoCloseable {
                 );
             }
 
+            notifyListeners(l -> l.onTaskStarted(task.taskId(), task.taskName(), task.attempt()));
+            long startTime = System.currentTimeMillis();
+
             @SuppressWarnings("unchecked")
             TaskHandler<Object, Object> handler = (TaskHandler<Object, Object>) registration.handler();
             Object result = handler.execute(params, ctx);
             completeTaskRun(result, task.runId());
 
-        } catch (SuspendTaskException | CancelledTaskException | FailedTaskException e) {
+            long duration = System.currentTimeMillis() - startTime;
+            notifyListeners(l -> l.onTaskCompleted(task.taskId(), task.taskName(), task.attempt(), duration));
+
+        } catch (SuspendTaskException e) {
+            notifyListeners(l -> l.onTaskSuspended(task.taskId(), task.taskName(), task.attempt()));
+        } catch (CancelledTaskException | FailedTaskException e) {
             // expected control flow
         } catch (Exception e) {
             log.error("[absurd] Task execution failed: {}", taskLabel, e);
+            notifyListeners(l -> l.onTaskFailed(task.taskId(), task.taskName(), task.attempt(), 0, e));
             try {
                 jdbi.useHandle(h -> failTaskRun(h, task.runId(), e));
             } catch (CancelledTaskException | FailedTaskException ignored) {}
@@ -675,15 +725,25 @@ public final class Absurd implements AutoCloseable {
                 );
             }
 
+            notifyListeners(l -> l.onTaskStarted(task.taskId(), task.taskName(), task.attempt()));
+            long startTime = System.currentTimeMillis();
+
             @SuppressWarnings("unchecked")
             TaskHandler<Object, Object> handler = (TaskHandler<Object, Object>) registration.handler();
             Object result = handler.execute(params, ctx);
             completeTaskRun(h, task.runId(), result);
 
-        } catch (SuspendTaskException | CancelledTaskException | FailedTaskException e) {
-            // Task suspended, cancelled, or already failed — do nothing
+            long duration = System.currentTimeMillis() - startTime;
+            notifyListeners(l -> l.onTaskCompleted(task.taskId(), task.taskName(), task.attempt(), duration));
+
+        } catch (SuspendTaskException e) {
+            notifyListeners(l -> l.onTaskSuspended(task.taskId(), task.taskName(), task.attempt()));
+        } catch (CancelledTaskException | FailedTaskException e) {
+            // Task cancelled or already failed — do nothing
         } catch (Exception e) {
             log.error("[absurd] Task execution failed: {}", taskLabel, e);
+            long duration = System.currentTimeMillis();
+            notifyListeners(l -> l.onTaskFailed(task.taskId(), task.taskName(), task.attempt(), 0, e));
             try {
                 failTaskRun(h, task.runId(), e);
             } catch (CancelledTaskException | FailedTaskException ignored) {
@@ -908,6 +968,16 @@ public final class Absurd implements AutoCloseable {
     public void close() {
         if (worker != null) {
             worker.close();
+        }
+    }
+
+    private void notifyListeners(java.util.function.Consumer<TaskLifecycleListener> action) {
+        for (var listener : listeners) {
+            try {
+                action.accept(listener);
+            } catch (Exception e) {
+                log.warn("TaskLifecycleListener threw exception", e);
+            }
         }
     }
 }
