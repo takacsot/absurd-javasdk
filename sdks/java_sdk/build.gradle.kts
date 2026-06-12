@@ -28,8 +28,7 @@ dependencies {
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    testImplementation("org.testcontainers:postgresql:1.20.4")
-    testImplementation("org.testcontainers:junit-jupiter:1.20.4")
+    testImplementation("io.zonky.test:embedded-postgres:2.1.0")
     testImplementation("org.assertj:assertj-core:3.26.3")
     testImplementation("ch.qos.logback:logback-classic:1.5.12")
     testImplementation("com.zaxxer:HikariCP:6.2.1")

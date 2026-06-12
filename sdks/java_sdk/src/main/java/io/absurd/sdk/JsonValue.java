@@ -45,6 +45,7 @@ public final class JsonValue {
         }
     }
 
+    @com.fasterxml.jackson.annotation.JsonValue
     public JsonNode node() {
         return node;
     }

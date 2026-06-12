@@ -2,11 +2,9 @@ package io.absurd.sdk;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.jdbi.v3.core.Jdbi;
 import org.junit.jupiter.api.*;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,31 +16,30 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@Testcontainers
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class AbsurdTest {
 
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
-
+    static EmbeddedPostgres pg;
     static HikariDataSource dataSource;
     static Absurd absurd;
     static String queueName;
 
     @BeforeAll
     static void setup() throws Exception {
+        pg = EmbeddedPostgres.start();
+
         HikariConfig config = new HikariConfig();
-        config.setJdbcUrl(postgres.getJdbcUrl());
-        config.setUsername(postgres.getUsername());
-        config.setPassword(postgres.getPassword());
+        config.setDataSource(pg.getPostgresDatabase());
         config.setMaximumPoolSize(5);
         dataSource = new HikariDataSource(config);
 
-        // Load schema
+        // Load schema (use raw JDBC to handle $$ dollar-quoting)
         Path schemaPath = Path.of("../../sql/absurd.sql");
         String schema = Files.readString(schemaPath);
-        Jdbi jdbi = Jdbi.create(dataSource);
-        jdbi.useHandle(h -> h.createScript(schema).execute());
+        try (var conn = dataSource.getConnection();
+             var stmt = conn.createStatement()) {
+            stmt.execute(schema);
+        }
 
         queueName = "test_queue_" + System.currentTimeMillis();
         absurd = Absurd.create(dataSource, queueName);
@@ -50,9 +47,10 @@ class AbsurdTest {
     }
 
     @AfterAll
-    static void teardown() {
+    static void teardown() throws Exception {
         if (absurd != null) absurd.close();
         if (dataSource != null) dataSource.close();
+        if (pg != null) pg.close();
     }
 
     @AfterEach

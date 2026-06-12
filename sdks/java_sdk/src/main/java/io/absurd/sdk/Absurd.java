@@ -100,15 +100,6 @@ public final class Absurd implements AutoCloseable {
         return new Absurd(jdbi, queueName, defaultMaxAttempts);
     }
 
-    public static Absurd create(String jdbcUrl) {
-        return create(jdbcUrl, "default");
-    }
-
-    public static Absurd create(String jdbcUrl, String queueName) {
-        Jdbi jdbi = Jdbi.create(jdbcUrl);
-        return new Absurd(jdbi, queueName, 5);
-    }
-
     public Jdbi jdbi() {
         return jdbi;
     }
