@@ -18,6 +18,11 @@ repositories {
 }
 
 dependencies {
+    compileOnly("org.projectlombok:lombok:1.18.34")
+    annotationProcessor("org.projectlombok:lombok:1.18.34")
+    testCompileOnly("org.projectlombok:lombok:1.18.34")
+    testAnnotationProcessor("org.projectlombok:lombok:1.18.34")
+
     api("org.jdbi:jdbi3-core:3.45.4")
     api("org.jdbi:jdbi3-postgres:3.45.4")
     api("org.jdbi:jdbi3-jackson2:3.45.4")

@@ -291,4 +291,59 @@ class WorkerTest {
         assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
         worker.close();
     }
+
+    @Test
+    void close_waitsForInFlightTasksUpToShutdownTimeout() throws Exception {
+        CountDownLatch taskStarted = new CountDownLatch(1);
+        CountDownLatch taskFinished = new CountDownLatch(1);
+
+        absurd.registerTask("slow-shutdown-task", JsonValue.class, (params, ctx) -> {
+            taskStarted.countDown();
+            Thread.sleep(2000); // simulate 2s work
+            taskFinished.countDown();
+            return "completed";
+        });
+
+        absurd.spawn("slow-shutdown-task", null);
+
+        Worker worker = absurd.startWorker(WorkerOptions.builder()
+                .pollIntervalSeconds(0.05)
+                .shutdownTimeoutSeconds(5) // enough time for the task to finish
+                .build());
+
+        assertThat(taskStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        worker.close(); // should wait for the task to complete
+
+        assertThat(taskFinished.await(0, TimeUnit.SECONDS)).isTrue(); // already done
+    }
+
+    @Test
+    void close_forcesShutdownWhenTimeoutExceeded() throws Exception {
+        CountDownLatch taskStarted = new CountDownLatch(1);
+        AtomicReference<Boolean> taskCompleted = new AtomicReference<>(false);
+
+        absurd.registerTask("very-slow-task", JsonValue.class, (params, ctx) -> {
+            taskStarted.countDown();
+            Thread.sleep(10_000); // simulate 10s work
+            taskCompleted.set(true);
+            return "completed";
+        });
+
+        absurd.spawn("very-slow-task", null);
+
+        Worker worker = absurd.startWorker(WorkerOptions.builder()
+                .pollIntervalSeconds(0.05)
+                .shutdownTimeoutSeconds(1) // only wait 1s
+                .build());
+
+        assertThat(taskStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+        long start = System.currentTimeMillis();
+        worker.close();
+        long elapsed = System.currentTimeMillis() - start;
+
+        // close() should return in ~6s (5s poller join + 1s executor timeout), not 10s
+        assertThat(elapsed).isLessThan(8000);
+        assertThat(taskCompleted.get()).isFalse(); // task was interrupted
+    }
 }

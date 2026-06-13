@@ -30,7 +30,8 @@ public record WorkerOptions(
         Integer batchSize,
         double pollIntervalSeconds,
         Consumer<Exception> onError,
-        boolean fatalOnLeaseTimeout
+        boolean fatalOnLeaseTimeout,
+        int shutdownTimeoutSeconds
 ) {
 
     public static Builder builder() {
@@ -53,6 +54,7 @@ public record WorkerOptions(
         private double pollIntervalSeconds = 0.25;
         private Consumer<Exception> onError;
         private boolean fatalOnLeaseTimeout = true;
+        private int shutdownTimeoutSeconds = 30;
 
         private Builder() {}
 
@@ -91,6 +93,11 @@ public record WorkerOptions(
             return this;
         }
 
+        public Builder shutdownTimeoutSeconds(int shutdownTimeoutSeconds) {
+            this.shutdownTimeoutSeconds = shutdownTimeoutSeconds;
+            return this;
+        }
+
         public WorkerOptions build() {
             String effectiveWorkerId = workerId;
             if (effectiveWorkerId == null) {
@@ -103,7 +110,7 @@ public record WorkerOptions(
             }
             Consumer<Exception> effectiveOnError = onError != null ? onError : ex -> {};
             return new WorkerOptions(effectiveWorkerId, claimTimeout, concurrency, batchSize,
-                    pollIntervalSeconds, effectiveOnError, fatalOnLeaseTimeout);
+                    pollIntervalSeconds, effectiveOnError, fatalOnLeaseTimeout, shutdownTimeoutSeconds);
         }
     }
 }

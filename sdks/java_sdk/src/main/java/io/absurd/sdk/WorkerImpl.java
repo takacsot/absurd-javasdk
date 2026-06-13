@@ -96,7 +96,7 @@ final class WorkerImpl implements Worker {
         }
         executor.shutdown();
         try {
-            if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
+            if (!executor.awaitTermination(options.shutdownTimeoutSeconds(), TimeUnit.SECONDS)) {
                 executor.shutdownNow();
             }
         } catch (InterruptedException e) {
