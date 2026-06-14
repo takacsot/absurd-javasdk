@@ -56,9 +56,13 @@ final class WorkerImpl implements Worker {
                     semaphore.acquire();
                     executor.submit(() -> {
                         try {
-                            absurd.jdbi().useHandle(h ->
-                                    absurd.executeTask(h, task, options.claimTimeout())
-                            );
+                            if (options.pooled()) {
+                                absurd.executeTaskPooled(task, options.claimTimeout());
+                            } else {
+                                absurd.jdbi().useHandle(h ->
+                                        absurd.executeTask(h, task, options.claimTimeout())
+                                );
+                            }
                         } catch (Exception e) {
                             options.onError().accept(e);
                         } finally {
