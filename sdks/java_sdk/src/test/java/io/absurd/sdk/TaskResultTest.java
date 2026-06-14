@@ -1,13 +1,7 @@
 package io.absurd.sdk;
 
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
-import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
-import org.jdbi.v3.core.Jdbi;
 import org.junit.jupiter.api.*;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -16,50 +10,21 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class TaskResultTest {
-
-    static EmbeddedPostgres pg;
-    static HikariDataSource dataSource;
-    static Absurd absurd;
-    static String queueName;
+class TaskResultTest extends AbstractAbsurdTest {
 
     @BeforeAll
     static void setup() throws Exception {
-        pg = EmbeddedPostgres.start();
-
-        HikariConfig config = new HikariConfig();
-        config.setDataSource(pg.getPostgresDatabase());
-        config.setMaximumPoolSize(5);
-        dataSource = new HikariDataSource(config);
-
-        Path schemaPath = Path.of("../../sql/absurd.sql");
-        String schema = Files.readString(schemaPath);
-        try (var conn = dataSource.getConnection();
-             var stmt = conn.createStatement()) {
-            stmt.execute(schema);
-        }
-
-        queueName = "result_test_q";
-        absurd = Absurd.create(dataSource, queueName);
-        absurd.createQueue(queueName);
+        setupBase("result_test_q");
     }
 
     @AfterAll
     static void teardown() throws Exception {
-        if (absurd != null) absurd.close();
-        if (dataSource != null) dataSource.close();
-        if (pg != null) pg.close();
+        teardownBase();
     }
 
     @AfterEach
     void cleanupTasks() {
-        Jdbi.create(dataSource).useHandle(h -> {
-            try {
-                h.execute("TRUNCATE absurd.t_" + queueName + ", absurd.r_" + queueName +
-                          ", absurd.c_" + queueName + ", absurd.e_" + queueName +
-                          ", absurd.w_" + queueName);
-            } catch (Exception ignored) {}
-        });
+        truncateQueue();
     }
 
     @Test
