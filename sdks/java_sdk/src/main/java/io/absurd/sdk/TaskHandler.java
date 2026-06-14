@@ -9,5 +9,5 @@ package io.absurd.sdk;
 @FunctionalInterface
 public interface TaskHandler<P, R> {
 
-    R execute(P params, TaskContext ctx) throws Exception;
+    R execute(P params, TaskOperations ctx) throws Exception;
 }

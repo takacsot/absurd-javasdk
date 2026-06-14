@@ -4,23 +4,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import lombok.extern.slf4j.Slf4j;
 import org.jdbi.v3.core.Jdbi;
 import org.jdbi.v3.core.Handle;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * The Absurd SDK client for durable task processing backed by PostgreSQL.
@@ -43,9 +36,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * @see TaskContext
  * @see SpawnOptions
  */
+@Slf4j
 public final class Absurd implements AutoCloseable {
 
-    private static final Logger log = LoggerFactory.getLogger(Absurd.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int MAX_QUEUE_NAME_LENGTH = 57;
     private static final int UNKNOWN_TASK_DEFER_BASE_SECONDS = 15;

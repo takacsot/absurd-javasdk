@@ -24,15 +24,6 @@ public class AbsurdWorkerDemo {
         String queueName = "default";
         Absurd absurd = Absurd.builder(dataSource)
                 .queueName(queueName)
-                .onTaskStarted((String taskId, String taskName, int attempt) -> {
-                    System.out.println("Starting " + taskId + " of " + taskName);
-                })
-                .onTaskFailed((String taskId, String taskName, int attempt, long durationMs, Exception error) -> {
-                    System.out.println("Failed " + taskId + " of " + taskName);
-                })
-                .onTaskCompleted((String taskId, String taskName, int attempt, long durationMs) -> {
-                    System.out.println("Completed " + taskId + " of " + taskName);
-                })
                 .build();
         absurd.createQueue(queueName);
         absurd.registerTask(TaskRegistration.builder("testing")

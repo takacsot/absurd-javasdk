@@ -30,7 +30,7 @@ import java.util.function.IntConsumer;
  *       Used by {@link Absurd#workBatchPooled}.</li>
  * </ul>
  */
-public final class TaskContext {
+public final class TaskContext implements TaskOperations {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
