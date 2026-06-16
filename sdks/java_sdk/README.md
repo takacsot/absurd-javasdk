@@ -349,6 +349,56 @@ absurd.emitEvent("order:123:shipped", Map.of("carrier", "fedex", "tracking", "TR
 absurd.emitEvent("order:123:shipped", payload, "orders");
 ```
 
+### Child Tasks
+
+Spawn child tasks from within a handler and await their results. The child must
+live on a **different queue** to avoid deadlocking workers.
+
+**Fire-and-forget** (same queue is fine):
+
+```java
+absurd.registerTask("parent", JsonValue.class, (params, ctx) -> {
+    // Spawn child as a checkpointed step — idempotent on retry
+    SpawnResult child = ctx.step("spawn-child", SpawnResult.class, () ->
+        absurd.spawn("child-task", Map.of("data", "hello")));
+
+    return Map.of("childTaskId", child.taskID());
+});
+```
+
+**Spawn and await result** (must use a different queue):
+
+```java
+// Register parent and child on separate queues
+var parentAbsurd = Absurd.create(dataSource, "parent-queue");
+var childAbsurd = Absurd.create(dataSource, "child-queue");
+
+childAbsurd.registerTask("compute", InputParams.class, (params, ctx) -> {
+    return ctx.step("work", Integer.class, () -> params.value() * 2);
+});
+
+parentAbsurd.registerTask("orchestrator", JsonValue.class, (params, ctx) -> {
+    // Spawn child (checkpointed so it's idempotent on retry)
+    SpawnResult child = ctx.step("spawn-child", SpawnResult.class, () ->
+        childAbsurd.spawn("compute", new InputParams(21)));
+
+    // Poll until child completes — auto-heartbeats to keep parent alive
+    TaskResultSnapshot result = ctx.awaitTaskResult(
+        child.taskID(), "child-queue", 30);  // 30s timeout
+
+    if (result instanceof TaskResultSnapshot.Completed c) {
+        return Map.of("answer", c.result().node().asInt());
+    }
+    throw new RuntimeException("Child failed: " + result.state());
+});
+```
+
+Key behaviors:
+- **Deadlock guard**: Throws `AbsurdException` if the target queue equals the parent's queue
+- **Auto-heartbeat**: Keeps the parent's lease alive while polling
+- **Checkpointed**: The child result is stored as a checkpoint — retries skip re-polling
+- **Timeout**: Throws `TimeoutException` if the child doesn't finish in time
+
 ### Queue Management
 
 ```java
@@ -399,7 +449,7 @@ Worker worker = absurd.startWorker(); // concurrency=1, poll=0.25s
 | `claimTimeout` | `120` | Seconds before lease expires |
 | `pollIntervalSeconds` | `0.25` | Seconds between empty polls |
 | `shutdownTimeoutSeconds` | `30` | Grace period on `close()` |
-| `fatalOnLeaseTimeout` | `true` | Treat expired leases as fatal |
+| `fatalOnLeaseTimeout` | `true` | Shuts down worker if a task exceeds its claim timeout without heartbeating |
 | `onError` | no-op | Error callback for worker-level failures |
 
 **Graceful shutdown with a JVM shutdown hook:**
@@ -421,6 +471,56 @@ Runtime.getRuntime().addShutdownHook(new Thread(() -> {
 // Block main thread; Ctrl+C triggers graceful shutdown
 Thread.currentThread().join();
 ```
+
+### Lease Timeout and `fatalOnLeaseTimeout`
+
+When a worker claims a task, it holds a lease for `claimTimeout` seconds. If the task
+doesn't complete or heartbeat before the lease expires, the worker's behavior depends
+on `fatalOnLeaseTimeout`:
+
+**`fatalOnLeaseTimeout = true` (default)** — the worker shuts itself down:
+
+```java
+Worker worker = absurd.startWorker(WorkerOptions.builder()
+    .claimTimeout(120)
+    .fatalOnLeaseTimeout(true)  // default
+    .build());
+
+// If any task runs > 120s without heartbeating, the worker stops.
+// worker.isRunning() will return false.
+```
+
+This is the safe default: a task exceeding its lease likely indicates the machine is
+overloaded or stuck. Shutting down prevents double-execution when another worker claims
+the same task.
+
+**`fatalOnLeaseTimeout = false`** — the worker logs and continues:
+
+```java
+Worker worker = absurd.startWorker(WorkerOptions.builder()
+    .claimTimeout(120)
+    .fatalOnLeaseTimeout(false)
+    .build());
+
+// Worker keeps polling even if a task exceeds its lease.
+```
+
+Use this for resilient long-running workers where occasional timeouts are tolerable.
+
+**Preventing lease timeout with heartbeats:**
+
+```java
+absurd.registerTask("long-job", Params.class, (params, ctx) -> {
+    for (var chunk : params.chunks()) {
+        processChunk(chunk);
+        ctx.heartbeat();  // resets the lease timer
+    }
+    return "done";
+});
+```
+
+Each `ctx.heartbeat()` call (and each step checkpoint) resets the watchdog timer.
+As long as you heartbeat more frequently than `claimTimeout`, the worker stays alive.
 
 ### Manual Batch Processing
 

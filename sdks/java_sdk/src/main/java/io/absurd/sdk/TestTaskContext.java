@@ -121,6 +121,12 @@ public class TestTaskContext implements TaskOperations {
         emitEvent(eventName, null);
     }
 
+    @Override
+    public TaskResultSnapshot awaitTaskResult(String taskID, String queue, Integer timeoutSeconds) {
+        // In test context, return a completed snapshot by default
+        return new TaskResultSnapshot.Completed(JsonValue.ofNull());
+    }
+
     // --- Test inspection ---
 
     public Map<String, JsonValue> getStepResults() {

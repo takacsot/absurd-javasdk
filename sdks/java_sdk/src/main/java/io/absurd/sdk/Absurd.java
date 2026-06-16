@@ -589,6 +589,10 @@ public final class Absurd implements AutoCloseable {
     }
 
     void executeTaskPooled(ClaimedTask task, int claimTimeout) {
+        executeTaskPooled(task, claimTimeout, leaseSeconds -> {});
+    }
+
+    void executeTaskPooled(ClaimedTask task, int claimTimeout, java.util.function.IntConsumer onLeaseExtended) {
         var registration = registry.get(task.taskName());
         String taskLabel = task.taskName() + " (" + task.taskId() + ")";
 
@@ -613,7 +617,7 @@ public final class Absurd implements AutoCloseable {
                 throw new AbsurdException("Misconfigured task (queue mismatch)");
             }
 
-            TaskContext ctx = TaskContext.createPooled(jdbi, queueName, task, claimTimeout, leaseSeconds -> {});
+            TaskContext ctx = TaskContext.createPooled(jdbi, queueName, task, claimTimeout, onLeaseExtended);
 
             Object params;
             if (registration.paramsType() == JsonValue.class) {
@@ -680,6 +684,10 @@ public final class Absurd implements AutoCloseable {
     // --- Task Execution ---
 
     void executeTask(Handle h, ClaimedTask task, int claimTimeout) {
+        executeTask(h, task, claimTimeout, leaseSeconds -> {});
+    }
+
+    void executeTask(Handle h, ClaimedTask task, int claimTimeout, java.util.function.IntConsumer onLeaseExtended) {
         var registration = registry.get(task.taskName());
         String taskLabel = task.taskName() + " (" + task.taskId() + ")";
 
@@ -706,7 +714,7 @@ public final class Absurd implements AutoCloseable {
                 throw new AbsurdException("Misconfigured task (queue mismatch)");
             }
 
-            TaskContext ctx = TaskContext.create(h, queueName, task, claimTimeout, leaseSeconds -> {});
+            TaskContext ctx = TaskContext.create(h, queueName, task, claimTimeout, onLeaseExtended);
 
             Object params;
             if (registration.paramsType() == JsonValue.class) {

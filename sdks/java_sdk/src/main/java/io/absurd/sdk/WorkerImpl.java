@@ -8,6 +8,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.IntConsumer;
 
 final class WorkerImpl implements Worker {
 
@@ -56,13 +58,7 @@ final class WorkerImpl implements Worker {
                     semaphore.acquire();
                     executor.submit(() -> {
                         try {
-                            if (options.pooled()) {
-                                absurd.executeTaskPooled(task, options.claimTimeout());
-                            } else {
-                                absurd.jdbi().useHandle(h ->
-                                        absurd.executeTask(h, task, options.claimTimeout())
-                                );
-                            }
+                            executeWithLeaseWatchdog(task);
                         } catch (Exception e) {
                             options.onError().accept(e);
                         } finally {
@@ -85,6 +81,60 @@ final class WorkerImpl implements Worker {
                 }
             }
         }
+    }
+
+    private void executeWithLeaseWatchdog(ClaimedTask task) {
+        String taskLabel = task.taskName() + " (" + task.taskId() + ")";
+        var deadline = new AtomicLong(System.currentTimeMillis() + options.claimTimeout() * 1000L);
+        var taskThread = Thread.currentThread();
+        var watchdogDone = new AtomicBoolean(false);
+
+        Thread watchdog = null;
+        if (options.fatalOnLeaseTimeout()) {
+            watchdog = new Thread(() -> {
+                while (!watchdogDone.get()) {
+                    long remaining = deadline.get() - System.currentTimeMillis();
+                    if (remaining <= 0) {
+                        // Lease expired — check if we're past 2x the claim timeout
+                        log.error("[absurd] Task {} exceeded claim timeout of {}s; shutting down worker",
+                                taskLabel, options.claimTimeout());
+                        running.set(false);
+                        taskThread.interrupt();
+                        break;
+                    }
+                    try {
+                        Thread.sleep(Math.min(remaining, 1000));
+                    } catch (InterruptedException e) {
+                        break;
+                    }
+                }
+            }, "absurd-lease-watchdog-" + task.taskId());
+            watchdog.setDaemon(true);
+            watchdog.start();
+        }
+
+        IntConsumer onLeaseExtended = leaseSeconds ->
+                deadline.set(System.currentTimeMillis() + leaseSeconds * 1000L);
+
+        try {
+            if (options.pooled()) {
+                absurd.executeTaskPooled(task, options.claimTimeout(), onLeaseExtended);
+            } else {
+                absurd.jdbi().useHandle(h ->
+                        absurd.executeTask(h, task, options.claimTimeout(), onLeaseExtended)
+                );
+            }
+        } finally {
+            watchdogDone.set(true);
+            if (watchdog != null) {
+                watchdog.interrupt();
+            }
+        }
+    }
+
+    @Override
+    public boolean isRunning() {
+        return running.get();
     }
 
     @Override

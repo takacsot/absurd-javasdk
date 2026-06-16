@@ -42,4 +42,6 @@ public interface TaskOperations {
     void emitEvent(String eventName, Object payload);
 
     void emitEvent(String eventName);
+
+    TaskResultSnapshot awaitTaskResult(String taskID, String queue, Integer timeoutSeconds);
 }

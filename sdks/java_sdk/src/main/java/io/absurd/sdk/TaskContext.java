@@ -323,6 +323,105 @@ public final class TaskContext implements TaskOperations {
         emitEvent(eventName, null);
     }
 
+    /**
+     * Spawns a child task and polls until it reaches a terminal state, returning the snapshot.
+     *
+     * <p>The child must be on a different queue than this task's queue to avoid deadlocking
+     * workers. Automatically sends heartbeats to keep the parent lease alive while waiting.</p>
+     *
+     * @param taskID         the child task's ID (already spawned)
+     * @param queue          the queue the child lives in; must differ from this task's queue
+     * @param timeoutSeconds max seconds to wait; {@code null} means wait indefinitely
+     * @return the terminal {@link TaskResultSnapshot}
+     * @throws AbsurdException  if queue matches this task's queue (deadlock guard)
+     * @throws TimeoutException if timeout elapses before the child completes
+     */
+    public TaskResultSnapshot awaitTaskResult(String taskID, String queue, Integer timeoutSeconds) {
+        if (queue == null || queue.equals(queueName)) {
+            throw new AbsurdException(
+                "TaskContext.awaitTaskResult cannot wait on tasks in the same queue because this can deadlock workers. " +
+                "Spawn the child in a different queue and pass the child's queue.");
+        }
+
+        String stepName = "$awaitTaskResult:" + taskID;
+        String checkpointName = getCheckpointName(stepName);
+        JsonValue cached = lookupCheckpoint(checkpointName);
+        if (cached != null) {
+            return snapshotFromJson(cached);
+        }
+
+        // Poll until terminal
+        long heartbeatIntervalMs = Math.max(500, (claimTimeout * 1000L) / 2);
+        long nextHeartbeatAt = System.currentTimeMillis() + heartbeatIntervalMs;
+        Long timeoutMs = (timeoutSeconds != null && timeoutSeconds >= 0)
+                ? (long) timeoutSeconds * 1000 : null;
+        long startedAt = System.currentTimeMillis();
+        long delayMs = 50;
+
+        while (true) {
+            TaskResultSnapshot snapshot = withConnection(h -> {
+                var rows = h.createQuery(
+                        "SELECT state, result, failure_reason FROM absurd.get_task_result(:queue, :taskId::uuid)")
+                    .bind("queue", queue)
+                    .bind("taskId", taskID)
+                    .mapToMap()
+                    .list();
+                if (rows.isEmpty()) return null;
+                var row = rows.get(0);
+                String state = (String) row.get("state");
+                return switch (state) {
+                    case "completed" -> {
+                        Object result = row.get("result");
+                        yield new TaskResultSnapshot.Completed(
+                            result == null ? JsonValue.ofNull() : JsonValue.parse(result.toString()));
+                    }
+                    case "failed" -> {
+                        Object failure = row.get("failure_reason");
+                        yield new TaskResultSnapshot.Failed(
+                            failure == null ? JsonValue.ofNull() : JsonValue.parse(failure.toString()));
+                    }
+                    case "cancelled" -> new TaskResultSnapshot.Cancelled();
+                    case "running" -> new TaskResultSnapshot.Running();
+                    case "sleeping" -> new TaskResultSnapshot.Sleeping();
+                    default -> new TaskResultSnapshot.Pending();
+                };
+            });
+
+            if (snapshot == null) {
+                throw new AbsurdException("Task \"" + taskID + "\" not found");
+            }
+            if (TaskResultSnapshot.isTerminal(snapshot)) {
+                // Persist as checkpoint
+                JsonValue value = snapshotToJson(snapshot);
+                persistCheckpoint(checkpointName, value);
+                return snapshot;
+            }
+
+            // Heartbeat to keep parent alive
+            long now = System.currentTimeMillis();
+            if (now >= nextHeartbeatAt) {
+                heartbeat();
+                nextHeartbeatAt = System.currentTimeMillis() + heartbeatIntervalMs;
+            }
+
+            if (timeoutMs != null) {
+                long elapsed = System.currentTimeMillis() - startedAt;
+                if (elapsed >= timeoutMs) {
+                    throw new TimeoutException("Timed out waiting for task \"" + taskID + "\"");
+                }
+                delayMs = Math.min(delayMs, timeoutMs - elapsed);
+            }
+
+            try {
+                Thread.sleep(Math.max(0, delayMs));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AbsurdException("Interrupted while waiting for child task", e);
+            }
+            delayMs = Math.min(delayMs * 2, 1000);
+        }
+    }
+
     // --- Internals ---
 
     private String getCheckpointName(String name) {
@@ -418,5 +517,33 @@ public final class TaskContext implements TaskOperations {
             return re;
         }
         return new AbsurdException("Database error: " + message, e);
+    }
+
+    private static JsonValue snapshotToJson(TaskResultSnapshot snapshot) {
+        if (snapshot instanceof TaskResultSnapshot.Completed c) {
+            return JsonValue.fromObject(Map.of("state", "completed", "result", c.result().node()));
+        } else if (snapshot instanceof TaskResultSnapshot.Failed f) {
+            return JsonValue.fromObject(Map.of("state", "failed", "failure", f.failure().node()));
+        } else if (snapshot instanceof TaskResultSnapshot.Cancelled) {
+            return JsonValue.fromObject(Map.of("state", "cancelled"));
+        } else {
+            return JsonValue.fromObject(Map.of("state", snapshot.state()));
+        }
+    }
+
+    private static TaskResultSnapshot snapshotFromJson(JsonValue value) {
+        var node = value.node();
+        String state = node.get("state").asText();
+        if ("completed".equals(state)) {
+            return new TaskResultSnapshot.Completed(
+                    node.has("result") ? JsonValue.of(node.get("result")) : JsonValue.ofNull());
+        } else if ("failed".equals(state)) {
+            return new TaskResultSnapshot.Failed(
+                    node.has("failure") ? JsonValue.of(node.get("failure")) : JsonValue.ofNull());
+        } else if ("cancelled".equals(state)) {
+            return new TaskResultSnapshot.Cancelled();
+        } else {
+            return new TaskResultSnapshot.Pending();
+        }
     }
 }

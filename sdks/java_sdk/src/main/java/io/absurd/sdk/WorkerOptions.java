@@ -19,7 +19,7 @@ import java.util.function.Consumer;
  *                            Default: 0.25. Lower values reduce latency but increase DB load
  * @param onError             callback invoked when a task fails with an unhandled exception;
  *                            receives the exception. Default: no-op. Use for alerting/metrics
- * @param fatalOnLeaseTimeout (TODO: Not implemented yet) if {@code true} (default), a lease timeout causes the worker to
+ * @param fatalOnLeaseTimeout if {@code true} (default), a lease timeout causes the worker to
  *                            shut down. If {@code false}, the worker logs the timeout and continues.
  *                            Set to {@code false} for resilient long-running workers
  */

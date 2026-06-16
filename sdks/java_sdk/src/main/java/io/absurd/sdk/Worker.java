@@ -10,4 +10,9 @@ public interface Worker extends AutoCloseable {
      */
     @Override
     void close();
+
+    /**
+     * Returns whether the worker is still actively polling for tasks.
+     */
+    boolean isRunning();
 }
