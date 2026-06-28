@@ -353,6 +353,38 @@ class TaskContextTest extends AbstractAbsurdTest {
     }
 
     @Test
+    void sleepFor_schedulesRelativeToDatabaseClock() {
+        int durationSeconds = 10;
+
+        absurd.registerTask("sleep-db-clock", JsonValue.class, (params, ctx) -> {
+            ctx.sleepFor("wait-for", durationSeconds);
+            return Map.of("resumed", true);
+        });
+
+        SpawnResult spawned = absurd.spawn("sleep-db-clock", null);
+        absurd.workBatch("w-sleep-db", 120, 1);
+
+        // Verify task is sleeping
+        assertThat(absurd.fetchTaskResult(spawned.taskID())).isInstanceOf(TaskResultSnapshot.Sleeping.class);
+
+        // Verify the run's available_at is scheduled relative to DB clock (now() + duration)
+        var result = org.jdbi.v3.core.Jdbi.create(dataSource).withHandle(h -> h.createQuery(
+                "SELECT available_at, (absurd.current_time() + make_interval(secs => :duration)) AS expected_at " +
+                        "FROM absurd.r_" + queueName + " WHERE run_id = :runId::uuid")
+                .bind("runId", spawned.runID())
+                .bind("duration", (double) durationSeconds)
+                .mapToMap()
+                .first());
+
+        java.sql.Timestamp availableAt = (java.sql.Timestamp) result.get("available_at");
+        java.sql.Timestamp expectedAt = (java.sql.Timestamp) result.get("expected_at");
+
+        // The available_at should be within 2 seconds of (db_now + duration)
+        long diffMs = Math.abs(availableAt.getTime() - expectedAt.getTime());
+        assertThat(diffMs).isLessThan(2000);
+    }
+
+    @Test
     void headers_accessibleInHandler() {
         AtomicReference<Object> captured = new AtomicReference<>();
 

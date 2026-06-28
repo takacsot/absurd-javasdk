@@ -206,8 +206,9 @@ public final class TaskContext implements TaskOperations {
             persistCheckpoint(checkpointName, JsonValue.fromObject(wakeAt.toString()));
         }
 
-        if (Instant.now().isBefore(actualWakeAt)) {
-            scheduleRun(actualWakeAt);
+        double remainingSeconds = Duration.between(Instant.now(), actualWakeAt).toMillis() / 1000.0;
+        if (remainingSeconds > 0) {
+            scheduleRunAfter(remainingSeconds);
             throw new SuspendTaskException();
         }
     }
@@ -475,12 +476,12 @@ public final class TaskContext implements TaskOperations {
         onLeaseExtended.accept(claimTimeout);
     }
 
-    private void scheduleRun(Instant wakeAt) {
+    private void scheduleRunAfter(double seconds) {
         useConnection(h ->
-            h.createUpdate("SELECT absurd.schedule_run(:queue, :runId::uuid, :wakeAt::timestamptz)")
+            h.createUpdate("SELECT absurd.schedule_run(:queue, :runId::uuid, absurd.current_time() + make_interval(secs => :seconds::double precision))")
                 .bind("queue", queueName)
                 .bind("runId", task.runId())
-                .bind("wakeAt", java.sql.Timestamp.from(wakeAt))
+                .bind("seconds", seconds)
                 .execute()
         );
     }
