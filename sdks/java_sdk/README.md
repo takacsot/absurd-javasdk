@@ -256,6 +256,55 @@ absurd.spawn(connection, "process-order", orderParams);
 | `cancellation` | from registration | Per-task cancellation policy |
 | `idempotencyKey` | none | Deduplicates spawns; same key = same task |
 
+### Spawn and Execute (Immediate Local Execution)
+
+For latency-sensitive scenarios (tests, request-scoped work), `spawnAndExecute` persists a task
+and immediately attempts to claim and execute it locally — bypassing polling latency:
+
+```java
+// Task executes immediately in a background virtual thread
+SpawnResult result = absurd.spawnAndExecute("send-email", emailParams);
+
+// Returns immediately — execution is async
+System.out.println("Task spawned: " + result.taskID());
+
+// Wait for completion if needed
+TaskResultSnapshot snapshot = absurd.awaitTaskResult(result.taskID(), null, 30);
+```
+
+**With options:**
+
+```java
+SpawnResult result = absurd.spawnAndExecute("send-email", emailParams,
+    SpawnOptions.builder()
+        .maxAttempts(3)
+        .headers(Map.of("trace-id", traceId))
+        .idempotencyKey("welcome-email-" + userId)
+        .build());
+```
+
+Key behaviors:
+- **Durable first**: The task is fully persisted before local execution is attempted
+- **Best-effort**: If another worker claims it first, the local attempt silently backs off
+- **No local retry**: If execution fails, retries follow the normal scheduled retry path
+- **Coexists with workers**: Normal polling workers are unaffected and can run alongside
+- **No double execution**: Uses `FOR UPDATE SKIP LOCKED` — exactly one executor wins
+
+This is ideal for tests or scenarios where you want predictable, low-latency execution
+without running a full background worker:
+
+```java
+// In tests — no worker needed for simple task verification
+absurd.registerTask("compute", JsonValue.class, (params, ctx) -> {
+    int x = params.node().get("x").asInt();
+    return ctx.step("double-it", Integer.class, () -> x * 2);
+});
+
+SpawnResult result = absurd.spawnAndExecute("compute", Map.of("x", 21));
+var snapshot = absurd.awaitTaskResult(result.taskID(), null, 5);
+// snapshot is Completed with result = 42
+```
+
 ### Retry Strategies
 
 ```java

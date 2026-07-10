@@ -991,6 +991,95 @@ begin
 end;
 $$;
 
+-- Claims a specific task run by its run_id for immediate local execution.
+--
+-- Unlike claim_task which uses FIFO ordering across available runs, this
+-- function targets a single run_id. It uses the same FOR UPDATE SKIP LOCKED
+-- semantics: if the run is already claimed, returns an empty result set.
+--
+-- This is designed for the spawnAndExecute pattern where a task is spawned
+-- and immediately claimed locally as a latency optimization.
+--
+-- Key differences from claim_task:
+-- * Targets a specific run_id instead of FIFO ordering
+-- * No cancellation sweep or expired lease sweep (handled by regular workers)
+-- * No batch — returns 0 or 1 row
+-- * Same state transitions and locking semantics
+create function absurd.claim_specific_task (
+  p_queue_name text,
+  p_run_id uuid,
+  p_worker_id text,
+  p_claim_timeout integer
+)
+  returns table (
+    run_id uuid,
+    task_id uuid,
+    attempt integer,
+    task_name text,
+    params jsonb,
+    retry_strategy jsonb,
+    max_attempts integer,
+    headers jsonb,
+    wake_event text,
+    event_payload jsonb
+  )
+  language plpgsql
+as $$
+declare
+  v_now timestamptz := absurd.current_time();
+  v_claim_until timestamptz := v_now + make_interval(secs => p_claim_timeout);
+begin
+  return query execute format(
+    'with candidate as (
+        select r.run_id
+          from absurd.%1$I r
+          join absurd.%2$I t on t.task_id = r.task_id
+         where r.run_id = $1
+           and r.state in (''pending'', ''sleeping'')
+           and t.state in (''pending'', ''sleeping'', ''running'')
+           and r.available_at <= $2
+         for update skip locked
+     ),
+     updated as (
+        update absurd.%1$I r
+           set state = ''running'',
+               claimed_by = $3,
+               claim_expires_at = $4,
+               started_at = $2,
+               available_at = $2
+         where run_id in (select run_id from candidate)
+         returning r.run_id, r.task_id, r.attempt
+     ),
+     task_upd as (
+        update absurd.%2$I t
+           set state = ''running'',
+               attempts = greatest(t.attempts, u.attempt),
+               first_started_at = coalesce(t.first_started_at, $2),
+               last_attempt_run = u.run_id
+          from updated u
+         where t.task_id = u.task_id
+         returning t.task_id
+     )
+     select
+       u.run_id,
+       u.task_id,
+       u.attempt,
+       t.task_name,
+       t.params,
+       t.retry_strategy,
+       t.max_attempts,
+       t.headers,
+       r.wake_event,
+       r.event_payload
+     from updated u
+     join absurd.%1$I r on r.run_id = u.run_id
+     join absurd.%2$I t on t.task_id = u.task_id',
+    'r_' || p_queue_name,
+    't_' || p_queue_name
+  ) using p_run_id, v_now, p_worker_id, v_claim_until;
+end;
+$$;
+
 -- Markes a run as completed
 create function absurd.complete_run (
   p_queue_name text,

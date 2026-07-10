@@ -13,6 +13,7 @@ import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -395,6 +396,69 @@ public final class Absurd implements AutoCloseable {
         return spawn(handle, taskName, params, options);
     }
 
+    // --- Spawn and Execute ---
+
+    /**
+     * Spawns a task and immediately attempts to claim and execute it locally.
+     *
+     * <p>The task is persisted to Postgres (full durability, same as {@link #spawn}) and then
+     * a background virtual thread attempts to claim the specific run and execute it using the
+     * registered handler. This bypasses polling latency for the happy path.</p>
+     *
+     * <p><strong>Best-effort:</strong> if a remote worker claims the task first, the local
+     * attempt silently backs off. If execution fails, retries follow the normal scheduled
+     * retry path (no local retry).</p>
+     *
+     * @param taskName the registered task name identifying which handler processes this task
+     * @param params   the task parameters, serialized to JSON
+     * @return a {@link SpawnResult} returned immediately (non-blocking); local execution
+     *         happens asynchronously in the background
+     * @throws AbsurdException if the task is unregistered and no queue is specified
+     */
+    public SpawnResult spawnAndExecute(String taskName, Object params) {
+        return spawnAndExecute(taskName, params, SpawnOptions.defaults());
+    }
+
+    /**
+     * Spawns a task with options and immediately attempts to claim and execute it locally.
+     *
+     * @param taskName the registered task name
+     * @param params   the task parameters, serialized to JSON
+     * @param options  spawn configuration overriding registration defaults
+     * @return a {@link SpawnResult} returned immediately (non-blocking)
+     * @throws AbsurdException if the task is unregistered and no queue is specified
+     * @see #spawnAndExecute(String, Object)
+     */
+    public SpawnResult spawnAndExecute(String taskName, Object params, SpawnOptions options) {
+        SpawnResult result = spawn(taskName, params, options);
+
+        String queue = resolveQueue(taskName, options);
+        Thread.startVirtualThread(() -> {
+            try {
+                Optional<ClaimedTask> claimed = claimSpecificTask(queue, result.runID(), 120, "local-exec");
+                claimed.ifPresent(task -> executeTaskPooled(task, 120));
+            } catch (Exception e) {
+                log.debug("[absurd] spawnAndExecute local claim failed (best-effort): {}", e.getMessage());
+            }
+        });
+
+        return result;
+    }
+
+    /**
+     * Resolves the effective queue name for a task based on its registration and spawn options.
+     */
+    String resolveQueue(String taskName, SpawnOptions options) {
+        var registration = registry.get(taskName);
+        if (registration != null) {
+            return registration.queue() != null ? registration.queue() : queueName;
+        }
+        if (options != null && options.queue() != null) {
+            return validateQueueName(options.queue());
+        }
+        return queueName;
+    }
+
     // --- Events ---
 
     public void emitEvent(String eventName) {
@@ -544,6 +608,39 @@ public final class Absurd implements AutoCloseable {
             tasks.add(mapClaimedTask(row));
         }
         return tasks;
+    }
+
+    /**
+     * Claims a specific task run by its run_id for immediate local execution.
+     *
+     * <p>Unlike {@link #claimTasks} which uses FIFO ordering, this targets a single run.
+     * Uses {@code FOR UPDATE SKIP LOCKED}: if the run is already claimed by another worker,
+     * returns empty (best-effort, no error).</p>
+     *
+     * @param queue        the queue containing the task
+     * @param runId        the specific run_id to claim (UUID string)
+     * @param claimTimeout seconds the claim remains valid
+     * @param workerId     identifier for this local execution
+     * @return the claimed task, or empty if the run was already claimed or unavailable
+     */
+    Optional<ClaimedTask> claimSpecificTask(String queue, String runId, int claimTimeout, String workerId) {
+        return jdbi.withHandle(h -> {
+            var rows = h.createQuery(
+                            "SELECT run_id, task_id, attempt, task_name, params, retry_strategy, " +
+                                    "max_attempts, headers, wake_event, event_payload " +
+                                    "FROM absurd.claim_specific_task(:queue, :runId::uuid, :workerId, :claimTimeout)")
+                    .bind("queue", queue)
+                    .bind("runId", runId)
+                    .bind("workerId", workerId)
+                    .bind("claimTimeout", claimTimeout)
+                    .mapToMap()
+                    .list();
+
+            if (rows.isEmpty()) {
+                return Optional.<ClaimedTask>empty();
+            }
+            return Optional.of(mapClaimedTask(rows.get(0)));
+        });
     }
 
     // --- Work Batch ---
