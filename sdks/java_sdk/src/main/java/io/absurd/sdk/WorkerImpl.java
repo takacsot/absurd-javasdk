@@ -20,6 +20,7 @@ final class WorkerImpl implements Worker {
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final Semaphore semaphore;
     private final ExecutorService executor;
+    private final PollIntervalController pollController;
     private Thread pollerThread;
 
     WorkerImpl(Absurd absurd, WorkerOptions options) {
@@ -27,6 +28,17 @@ final class WorkerImpl implements Worker {
         this.options = options;
         this.semaphore = new Semaphore(options.concurrency());
         this.executor = Executors.newFixedThreadPool(options.concurrency());
+
+        if (options.dynamicPolling()) {
+            this.pollController = new PollIntervalController(
+                    options.minPollInterval(),
+                    options.maxPollInterval(),
+                    options.pollBackoffStep(),
+                    options.onPollIntervalChanged()
+            );
+        } else {
+            this.pollController = null;
+        }
     }
 
     void start() {
@@ -49,10 +61,15 @@ final class WorkerImpl implements Worker {
                 var tasks = absurd.claimTasks(toClaim, options.claimTimeout(), options.workerId());
 
                 if (tasks.isEmpty()) {
-                    long sleepMs = (long) (options.pollIntervalSeconds() * 1000);
-                    Thread.sleep(sleepMs);
+                    long sleepMs = getSleepAfterPoll(0, toClaim);
+                    if (sleepMs > 0) {
+                        Thread.sleep(sleepMs);
+                    }
                     continue;
                 }
+
+                // Determine sleep before dispatching tasks
+                long sleepMs = getSleepAfterPoll(tasks.size(), toClaim);
 
                 for (var task : tasks) {
                     semaphore.acquire();
@@ -67,13 +84,17 @@ final class WorkerImpl implements Worker {
                     });
                 }
 
+                if (sleepMs > 0) {
+                    Thread.sleep(sleepMs);
+                }
+
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
                 options.onError().accept(e);
                 try {
-                    long sleepMs = (long) (options.pollIntervalSeconds() * 1000);
+                    long sleepMs = getSleepAfterError();
                     Thread.sleep(sleepMs);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
@@ -81,6 +102,21 @@ final class WorkerImpl implements Worker {
                 }
             }
         }
+    }
+
+    private long getSleepAfterPoll(int claimed, int batchSize) {
+        if (pollController != null) {
+            return pollController.afterPoll(claimed, batchSize);
+        }
+        // Fixed interval (legacy behavior)
+        return (long) (options.pollIntervalSeconds() * 1000);
+    }
+
+    private long getSleepAfterError() {
+        if (pollController != null) {
+            return pollController.afterError();
+        }
+        return (long) (options.pollIntervalSeconds() * 1000);
     }
 
     private void executeWithLeaseWatchdog(ClaimedTask task) {
@@ -95,7 +131,6 @@ final class WorkerImpl implements Worker {
                 while (!watchdogDone.get()) {
                     long remaining = deadline.get() - System.currentTimeMillis();
                     if (remaining <= 0) {
-                        // Lease expired — check if we're past 2x the claim timeout
                         log.error("[absurd] Task {} exceeded claim timeout of {}s; shutting down worker",
                                 taskLabel, options.claimTimeout());
                         running.set(false);

@@ -500,6 +500,43 @@ Worker worker = absurd.startWorker(); // concurrency=1, poll=0.25s
 | `shutdownTimeoutSeconds` | `30` | Grace period on `close()` |
 | `fatalOnLeaseTimeout` | `true` | Shuts down worker if a task exceeds its claim timeout without heartbeating |
 | `onError` | no-op | Error callback for worker-level failures |
+| `dynamicPolling` | `false` | Enable adaptive poll interval (see below) |
+
+### Dynamic Polling
+
+By default, workers poll at a fixed interval regardless of queue activity. Enable
+**dynamic polling** to automatically adjust the poll frequency based on load:
+poll aggressively when tasks are available, back off linearly when idle.
+
+```java
+Worker worker = absurd.startWorker(WorkerOptions.builder()
+    .concurrency(4)
+    .dynamicPolling(true)
+    .minPollInterval(Duration.ofMillis(25))   // fastest (default: 25ms)
+    .maxPollInterval(Duration.ofSeconds(5))   // slowest (default: 5s)
+    .pollBackoffStep(Duration.ofMillis(250))  // linear step per empty poll (default: 250ms)
+    .onPollIntervalChanged(interval ->
+        log.info("Poll interval now: {}ms", interval.toMillis()))
+    .build());
+```
+
+Behavior:
+- **Full batch claimed** → skip sleep, re-poll immediately
+- **Partial batch claimed** → reset to `minPollInterval`
+- **Empty poll** → increase interval by `pollBackoffStep` (capped at `maxPollInterval`)
+- **Tasks arrive after idle** → snap back to `minPollInterval` instantly
+- **Errors** → back off (same as empty poll, protects the database)
+
+| Field | Default | Description |
+|---|---|---|
+| `dynamicPolling` | `false` | Opt-in to adaptive polling |
+| `minPollInterval` | `25ms` | Fastest poll rate (queue is busy) |
+| `maxPollInterval` | `5s` | Slowest poll rate (queue is idle) |
+| `pollBackoffStep` | `250ms` | Added to interval after each empty poll |
+| `onPollIntervalChanged` | none | Callback when effective interval changes |
+
+When `dynamicPolling` is `false` (default), the worker uses the fixed
+`pollIntervalSeconds` — no behavior change for existing code.
 
 **Graceful shutdown with a JVM shutdown hook:**
 

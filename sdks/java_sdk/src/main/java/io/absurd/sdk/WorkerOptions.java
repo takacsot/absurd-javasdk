@@ -1,5 +1,6 @@
 package io.absurd.sdk;
 
+import java.time.Duration;
 import java.util.function.Consumer;
 
 /**
@@ -16,12 +17,19 @@ import java.util.function.Consumer;
  *                            the concurrency value. Increase for high-throughput scenarios to
  *                            reduce polling overhead
  * @param pollIntervalSeconds seconds between poll attempts when the queue is empty.
- *                            Default: 0.25. Lower values reduce latency but increase DB load
+ *                            Default: 0.25. Lower values reduce latency but increase DB load.
+ *                            Ignored when {@code dynamicPolling} is enabled
  * @param onError             callback invoked when a task fails with an unhandled exception;
  *                            receives the exception. Default: no-op. Use for alerting/metrics
  * @param fatalOnLeaseTimeout if {@code true} (default), a lease timeout causes the worker to
  *                            shut down. If {@code false}, the worker logs the timeout and continues.
  *                            Set to {@code false} for resilient long-running workers
+ * @param dynamicPolling      enable adaptive polling. When true, the worker backs off linearly
+ *                            when idle and snaps back to min interval when work arrives
+ * @param minPollInterval     fastest poll rate when queue is busy (default: 25ms)
+ * @param maxPollInterval     slowest poll rate when queue is idle (default: 5s)
+ * @param pollBackoffStep     amount added to interval after each empty poll (default: 250ms)
+ * @param onPollIntervalChanged callback invoked when the effective poll interval changes
  */
 public record WorkerOptions(
         String workerId,
@@ -32,7 +40,12 @@ public record WorkerOptions(
         Consumer<Exception> onError,
         boolean fatalOnLeaseTimeout,
         int shutdownTimeoutSeconds,
-        boolean pooled
+        boolean pooled,
+        boolean dynamicPolling,
+        Duration minPollInterval,
+        Duration maxPollInterval,
+        Duration pollBackoffStep,
+        Consumer<Duration> onPollIntervalChanged
 ) {
 
     public static Builder builder() {
@@ -57,6 +70,11 @@ public record WorkerOptions(
         private boolean fatalOnLeaseTimeout = true;
         private int shutdownTimeoutSeconds = 30;
         private boolean pooled = false;
+        private boolean dynamicPolling = false;
+        private Duration minPollInterval = Duration.ofMillis(25);
+        private Duration maxPollInterval = Duration.ofSeconds(5);
+        private Duration pollBackoffStep = Duration.ofMillis(250);
+        private Consumer<Duration> onPollIntervalChanged;
 
         private Builder() {}
 
@@ -105,6 +123,31 @@ public record WorkerOptions(
             return this;
         }
 
+        public Builder dynamicPolling(boolean dynamicPolling) {
+            this.dynamicPolling = dynamicPolling;
+            return this;
+        }
+
+        public Builder minPollInterval(Duration minPollInterval) {
+            this.minPollInterval = minPollInterval;
+            return this;
+        }
+
+        public Builder maxPollInterval(Duration maxPollInterval) {
+            this.maxPollInterval = maxPollInterval;
+            return this;
+        }
+
+        public Builder pollBackoffStep(Duration pollBackoffStep) {
+            this.pollBackoffStep = pollBackoffStep;
+            return this;
+        }
+
+        public Builder onPollIntervalChanged(Consumer<Duration> onPollIntervalChanged) {
+            this.onPollIntervalChanged = onPollIntervalChanged;
+            return this;
+        }
+
         public WorkerOptions build() {
             String effectiveWorkerId = workerId;
             if (effectiveWorkerId == null) {
@@ -116,8 +159,28 @@ public record WorkerOptions(
                 }
             }
             Consumer<Exception> effectiveOnError = onError != null ? onError : ex -> {};
+
+            if (dynamicPolling) {
+                if (minPollInterval.isNegative() || minPollInterval.isZero()) {
+                    throw new IllegalArgumentException("minPollInterval must be positive");
+                }
+                if (maxPollInterval.isNegative() || maxPollInterval.isZero()) {
+                    throw new IllegalArgumentException("maxPollInterval must be positive");
+                }
+                if (minPollInterval.compareTo(maxPollInterval) > 0) {
+                    throw new IllegalArgumentException(
+                            "minPollInterval (" + minPollInterval.toMillis() + "ms) must be <= maxPollInterval ("
+                                    + maxPollInterval.toMillis() + "ms)");
+                }
+                if (pollBackoffStep.isNegative() || pollBackoffStep.isZero()) {
+                    throw new IllegalArgumentException("pollBackoffStep must be positive");
+                }
+            }
+
             return new WorkerOptions(effectiveWorkerId, claimTimeout, concurrency, batchSize,
-                    pollIntervalSeconds, effectiveOnError, fatalOnLeaseTimeout, shutdownTimeoutSeconds, pooled);
+                    pollIntervalSeconds, effectiveOnError, fatalOnLeaseTimeout, shutdownTimeoutSeconds,
+                    pooled, dynamicPolling, minPollInterval, maxPollInterval, pollBackoffStep,
+                    onPollIntervalChanged);
         }
     }
 }
