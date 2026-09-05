@@ -12,7 +12,7 @@ java {
 }
 
 application {
-    mainClass = 'takacso.absurdjava.TemplateExample'
+    mainClass = 'takacsot.absurd.habitat.HabitatApp'
 }
 
 group = 'takacso.absurd-java'

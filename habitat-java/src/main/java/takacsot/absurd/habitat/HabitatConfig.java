@@ -25,7 +25,7 @@ public class HabitatConfig {
         cfg.dbPassword = env("HABITAT_DB_PASSWORD", cfg.dbPassword);
         cfg.dbName = env("HABITAT_DB_NAME", "takacso" /*cfg.dbName*/);
         cfg.dbSslMode = env("HABITAT_DB_SSLMODE", cfg.dbSslMode);
-        cfg.templateDir = env("HABITAT_TEMPLATE_DIR", "/Users/takacso/Resources/absurd/absurd-java/src/main/resources/templates" /*cfg.templateDir*/);
+        cfg.templateDir = env("HABITAT_TEMPLATE_DIR", cfg.templateDir);
         return cfg;
     }
 
