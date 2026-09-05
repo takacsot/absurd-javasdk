@@ -319,6 +319,17 @@ RetryStrategy.exponential(1.0, 2.0, 60.0)
 RetryStrategy.none()
 ```
 
+Since schema version 0.5.0 the server validates retry strategies at spawn time and caps all
+automatic retry delays at **one day (86400 seconds)**:
+
+- `base_seconds` and `max_seconds` must be within `[0, 86400]`
+- `factor` must be a finite non-negative number
+- an invalid strategy makes `spawn` throw `InvalidRetryStrategyException` (SQLSTATE `AB003`)
+- exponential backoff without `max_seconds` defaults to the 86400s cap; numeric overflow
+  saturates at the cap instead of erroring
+- legacy tasks already stored with an invalid strategy are failed permanently on their next
+  retry instead of blocking queue maintenance
+
 ### Cancellation Policies
 
 ```java

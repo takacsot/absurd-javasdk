@@ -162,4 +162,36 @@ class RetryTest extends AbstractAbsurdTest {
         assertThatThrownBy(() -> absurd.retryTask(UUID.randomUUID().toString()))
                 .isInstanceOf(Exception.class);
     }
+
+    @Test
+    void spawnWithBaseSecondsAboveCap_throwsInvalidRetryStrategy() {
+        absurd.registerTask("retry-invalid-base", JsonValue.class, (params, ctx) -> "ok");
+
+        assertThatThrownBy(() -> absurd.spawn("retry-invalid-base", null,
+                SpawnOptions.builder().retryStrategy(RetryStrategy.fixed(86401)).build()))
+                .isInstanceOf(InvalidRetryStrategyException.class)
+                .hasMessageContaining("base_seconds");
+    }
+
+    @Test
+    void spawnWithNegativeFactor_throwsInvalidRetryStrategy() {
+        absurd.registerTask("retry-invalid-factor", JsonValue.class, (params, ctx) -> "ok");
+
+        assertThatThrownBy(() -> absurd.spawn("retry-invalid-factor", null,
+                SpawnOptions.builder().retryStrategy(RetryStrategy.exponential(30, -1, 60)).build()))
+                .isInstanceOf(InvalidRetryStrategyException.class)
+                .hasMessageContaining("factor");
+    }
+
+    @Test
+    void exponentialDelay_saturatesAtOneDayCap() {
+        // Server-side delay math: exponential without max_seconds is capped at 86400s.
+        Double delay = org.jdbi.v3.core.Jdbi.create(dataSource).withHandle(h ->
+                h.createQuery("SELECT absurd.retry_delay_seconds(" +
+                                "'{\"kind\":\"exponential\",\"base_seconds\":3600,\"factor\":10}'::jsonb, 10)")
+                        .mapTo(Double.class)
+                        .one());
+
+        assertThat(delay).isEqualTo(86400.0);
+    }
 }

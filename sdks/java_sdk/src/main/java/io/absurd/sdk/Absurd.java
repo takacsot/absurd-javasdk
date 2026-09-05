@@ -271,23 +271,27 @@ public final class Absurd implements AutoCloseable {
         String paramsJson = JsonValue.fromObject(params).toJson();
         String optionsJson = normalizedOptions.toString();
 
-        return jdbi.withHandle(h -> {
-            var row = h.createQuery(
-                            "SELECT task_id, run_id, attempt, created FROM absurd.spawn_task(:queue, :taskName, :params::jsonb, :options::jsonb)")
-                    .bind("queue", queue)
-                    .bind("taskName", taskName)
-                    .bind("params", paramsJson)
-                    .bind("options", optionsJson)
-                    .mapToMap()
-                    .first();
+        try {
+            return jdbi.withHandle(h -> {
+                var row = h.createQuery(
+                                "SELECT task_id, run_id, attempt, created FROM absurd.spawn_task(:queue, :taskName, :params::jsonb, :options::jsonb)")
+                        .bind("queue", queue)
+                        .bind("taskName", taskName)
+                        .bind("params", paramsJson)
+                        .bind("options", optionsJson)
+                        .mapToMap()
+                        .first();
 
-            return new SpawnResult(
-                    row.get("task_id").toString(),
-                    row.get("run_id").toString(),
-                    ((Number) row.get("attempt")).intValue(),
-                    (Boolean) row.get("created")
-            );
-        });
+                return new SpawnResult(
+                        row.get("task_id").toString(),
+                        row.get("run_id").toString(),
+                        ((Number) row.get("attempt")).intValue(),
+                        (Boolean) row.get("created")
+                );
+            });
+        } catch (Exception e) {
+            throw mapSpawnError(e);
+        }
     }
 
     /**
@@ -350,14 +354,19 @@ public final class Absurd implements AutoCloseable {
         String paramsJson = JsonValue.fromObject(params).toJson();
         String optionsJson = normalizedOptions.toString();
 
-        var row = handle.createQuery(
-                        "SELECT task_id, run_id, attempt, created FROM absurd.spawn_task(:queue, :taskName, :params::jsonb, :options::jsonb)")
-                .bind("queue", queue)
-                .bind("taskName", taskName)
-                .bind("params", paramsJson)
-                .bind("options", optionsJson)
-                .mapToMap()
-                .first();
+        java.util.Map<String, Object> row;
+        try {
+            row = handle.createQuery(
+                            "SELECT task_id, run_id, attempt, created FROM absurd.spawn_task(:queue, :taskName, :params::jsonb, :options::jsonb)")
+                    .bind("queue", queue)
+                    .bind("taskName", taskName)
+                    .bind("params", paramsJson)
+                    .bind("options", optionsJson)
+                    .mapToMap()
+                    .first();
+        } catch (Exception e) {
+            throw mapSpawnError(e);
+        }
 
         return new SpawnResult(
                 row.get("task_id").toString(),
@@ -1021,6 +1030,18 @@ public final class Absurd implements AutoCloseable {
         err.printStackTrace(new java.io.PrintWriter(sw));
         node.put("stack", sw.toString());
         return node.toString();
+    }
+
+    private static RuntimeException mapSpawnError(Exception e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof java.sql.SQLException sql && "AB003".equals(sql.getSQLState())) {
+                return new InvalidRetryStrategyException(sql.getMessage(), e);
+            }
+        }
+        if (e instanceof RuntimeException re) {
+            return re;
+        }
+        return new AbsurdException("Database error: " + e.getMessage(), e);
     }
 
     private static RuntimeException mapTaskStateError(Exception e) {
